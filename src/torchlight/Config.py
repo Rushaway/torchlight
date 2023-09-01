@@ -1,9 +1,8 @@
-import json
+import yaml
 import logging
 import sys
 from dataclasses import dataclass
 from typing import Any
-
 
 @dataclass
 class ConfigAccess:
@@ -11,10 +10,9 @@ class ConfigAccess:
     level: int
     uniqueid: str
 
-
 class Config:
     def __init__(
-        self, config_folder: str, config_filename: str = "config.json"
+        self, config_folder: str, config_filename: str = "config.yaml"
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.config_folder = config_folder
@@ -26,8 +24,8 @@ class Config:
     def Load(self) -> int:
         try:
             with open(self.config_filepath) as fp:
-                self.config = json.load(fp)
-        except ValueError as e:
+                self.config = yaml.safe_load(fp)
+        except yaml.YAMLError as e:
             self.logger.error(sys._getframe().f_code.co_name + " " + str(e))
             return 1
         return 0
