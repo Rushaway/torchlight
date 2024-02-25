@@ -74,10 +74,10 @@ class Torchlight:
 
             if level < self.config["AntiSpam"]["ImmunityLevel"]:
                 cooldown = len(lines) * self.config["AntiSpam"]["ChatCooldown"]
-                if player.chat_cooldown > self.loop.time():
-                    player.chat_cooldown += cooldown
-                else:
+                if player.chat_cooldown <= self.loop.time():
                     player.chat_cooldown = self.loop.time() + cooldown
+                else:
+                    player.chat_cooldown += cooldown
 
     def SayPrivate(self, player: Player, message: str) -> None:
         message = f"{{darkblue}}[Torchlight]: {{default}}{message}"
