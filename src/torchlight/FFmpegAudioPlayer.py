@@ -5,6 +5,7 @@ import socket
 import struct
 import time
 import traceback
+import urllib.parse
 from asyncio import StreamReader, StreamWriter
 from asyncio.subprocess import Process
 from collections.abc import Callable
@@ -61,7 +62,7 @@ class FFmpegAudioPlayer:
             "--output",
             "-",
             "-L",
-            uri,
+            urllib.parse.quote(uri),
         ]
         if self.proxy:
             curl_command.extend(
