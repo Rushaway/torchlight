@@ -5,6 +5,7 @@ import socket
 import struct
 import time
 import traceback
+import urllib.parse
 from asyncio import StreamReader, StreamWriter
 from asyncio.subprocess import Process
 from collections.abc import Callable
@@ -112,6 +113,7 @@ class FFmpegAudioPlayer:
 
     # @profile
     def Stop(self, force: bool = True) -> bool:
+        self.logger.info(f"FFmpegAudioPlayer.Stop called for {self.uri}")
         if not self.playing:
             return False
 
@@ -230,7 +232,13 @@ class FFmpegAudioPlayer:
 
                 if writer is not None:
                     writer.write(data)
-                    await writer.drain()
+                    # await writer.drain()
+
+                    # better error handling.
+                    try:
+                        await writer.drain()
+                    except (ConnectionResetError, BrokenPipeError):
+                        return
 
                 bytes_len = len(data)
                 samples = bytes_len / SAMPLEBYTES
@@ -299,7 +307,13 @@ class FFmpegAudioPlayer:
 
                 if writer:
                     writer.write(chunk)
-                    await writer.drain()
+                    # await writer.drain()
+
+                    # better error handling.
+                    try:
+                        await writer.drain()
+                    except (ConnectionResetError, BrokenPipeError):
+                        return
             if writer:
                 writer.close()
         except Exception as exc:

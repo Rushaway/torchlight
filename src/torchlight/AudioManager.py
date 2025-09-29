@@ -90,6 +90,18 @@ class AudioManager:
                         f'Stopped "{audio_clip.player.name}"({audio_clip.player.user_id}) audio clip.',
                     )
 
+    def StopAll(self) -> None:
+        self.logger.info("Force stopping all audio clips from all users.")
+        # Copy the list to avoid modification during iteration
+        for audio_clip in self.audio_clips[:]:
+            try:
+                audio_clip.Stop()
+            except Exception as e:
+                self.logger.error(f"Error stopping audio clip: {e}")
+            self.torchlight.SayPrivate(audio_clip.player, "All audio has been force-stopped by admin.")
+        # Clear the list immediately
+        self.audio_clips.clear()
+
     def AudioClip(
         self,
         player: Player,

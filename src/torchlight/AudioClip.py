@@ -37,6 +37,7 @@ class AudioClip:
         return self.audio_player.PlayURI(self.uri, seconds, *args)
 
     def Stop(self) -> bool:
+        self.logger.info(f"AudioClip.Stop called for {self.uri}")
         return self.audio_player.Stop()
 
     def OnPlay(self) -> None:

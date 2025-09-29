@@ -8,6 +8,9 @@ import secrets
 import sys
 import tempfile
 import traceback
+import googletrans
+from googletrans import Translator
+import yt_dlp
 from pathlib import Path
 from re import Match, Pattern
 from typing import Any
@@ -754,8 +757,15 @@ class YouTubeSearch(BaseCommand):
             return -1
 
         command_config = self.get_config()
+        proxy = command_config.get("parameters", {}).get("proxy", "")
+        cookies = command_config.get("parameters", {}).get("cookies", None)
 
-        input_keywords = message[1]
+        input_keywords = message[1].strip()
+        if not input_keywords:
+            self.torchlight.SayPrivate(player, "Please provide a YouTube URL or search query.")
+            return 1
+
+        # Detect if input is a YouTube URL or a search query
         if URLFilter.youtube_regex.search(input_keywords):
             input_url = input_keywords
         else:
@@ -763,32 +773,94 @@ class YouTubeSearch(BaseCommand):
 
         real_time = get_url_real_time(url=input_url)
 
-        proxy = command_config.get("parameters", {}).get("proxy", "")
-
+        # Fetch info using yt-dlp
         try:
-            info = get_url_youtube_info(url=input_url, proxy=proxy)
+            if cookies:
+                info = get_url_youtube_info(url=input_url, proxy=proxy, cookies=cookies)
+            else:
+                info = get_url_youtube_info(url=input_url, proxy=proxy)
         except Exception as exc:
-            self.logger.error(f"Failed to extract youtube info from: {input_url}")
+            self.logger.error(f"Failed to extract YouTube info from: {input_url}")
             self.logger.error(exc)
             self.torchlight.SayPrivate(
                 player,
-                "An error as occured while trying to retrieve youtube metadata.",
+                "An error occurred while trying to retrieve YouTube metadata.",
             )
             return 1
 
-        if "title" not in info and "url" in info:
-            info = get_url_youtube_info(url=info["url"], proxy=proxy)
-        if info["extractor_key"] == "YoutubeSearch":
-            info = get_first_valid_entry(entries=info["entries"], proxy=proxy)
+        # If info is a playlist/search result, pick the first valid entry
+        if "entries" in info and isinstance(info["entries"], list) and info["entries"]:
+            entry = None
+            try:
+                entry = get_first_valid_entry(info["entries"], proxy=proxy, cookies=cookies)
+            except Exception:
+                entry = info["entries"][0]
+            if entry:
+                info = entry
 
-        title = info["title"]
+        # Fallback: Try to resolve incomplete info dicts
+        for _ in range(2):
+            if "title" not in info and "url" in info:
+                self.logger.warning(f"Info missing title, retrying with url: {info['url']}")
+                try:
+                    if cookies:
+                        info = get_url_youtube_info(url=info["url"], proxy=proxy, cookies=cookies)
+                    else:
+                        info = get_url_youtube_info(url=info["url"], proxy=proxy)
+                except Exception as exc:
+                    self.logger.error(f"Failed to extract YouTube info from: {info.get('url', input_url)}")
+                    self.logger.error(exc)
+                    self.torchlight.SayPrivate(
+                        player,
+                        "An error occurred while trying to retrieve YouTube metadata.",
+                    )
+                    return 1
+            elif info.get("extractor_key") == "YoutubeSearch" and "url" in info:
+                self.logger.warning(f"Extractor key is YoutubeSearch, retrying with url: {info['url']}")
+                try:
+                    if cookies:
+                        info = get_url_youtube_info(url=info["url"], proxy=proxy, cookies=cookies)
+                    else:
+                        info = get_url_youtube_info(url=info["url"], proxy=proxy)
+                except Exception as exc:
+                    self.logger.error(f"Failed to extract YouTube info from: {info.get('url', input_url)}")
+                    self.logger.error(exc)
+                    self.torchlight.SayPrivate(
+                        player,
+                        "An error occurred while trying to retrieve YouTube metadata.",
+                    )
+                    return 1
+            else:
+                break
+
+        self.logger.debug(f"YouTube info dict: {info}")
+
+        # If still no title or url, fail gracefully
+        if "title" not in info or "url" not in info:
+            self.torchlight.SayPrivate(player, "Could not find a playable YouTube video for your query.")
+            return 1
+
+        # Check for formats before trying to play
+        if "formats" not in info or not isinstance(info["formats"], list):
+            self.torchlight.SayPrivate(
+                player,
+                "This video cannot be played without valid YouTube cookies. "
+                "Please export your cookies from your browser and add them to your config. "
+                "See: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+            )
+            self.logger.error(f"YouTube info dict missing formats: {info}")
+            return 1
+
+        title = info.get("title", "Unknown Title")
         url = get_audio_format(info=info)
+        duration = str(datetime.timedelta(seconds=info.get("duration", 0)))
+        views = int(info.get("view_count", 0))
+
+        # Banned keywords logic
         title_words = title.split()
         keywords_banned: list[str] = []
-
         if "parameters" in command_config and "keywords_banned" in command_config["parameters"]:
             keywords_banned = command_config["parameters"]["keywords_banned"]
-
         for keyword_banned in keywords_banned:
             for title_word in title_words:
                 if keyword_banned.lower() in title_word.lower():
@@ -797,16 +869,14 @@ class YouTubeSearch(BaseCommand):
                     )
                     return 1
 
-        duration = str(datetime.timedelta(seconds=info["duration"]))
-        views = int(info["view_count"])
         self.torchlight.SayChat(f"{{darkred}}[YouTube]{{default}} {title} | {duration} | {views}")
 
         audio_clip = self.audio_manager.AudioClip(player, url)
         if not audio_clip:
+            self.torchlight.SayPrivate(player, "Failed to create audio clip for playback.")
             return 1
 
         self.torchlight.last_url = url
-
         return audio_clip.Play(real_time)
 
 
@@ -877,7 +947,13 @@ class Say(BaseCommand):
             "zh",
         ]
 
+    def collapse_repeated_vowels(self, text: str) -> str:
+        # Replace sequences of 2 or more vowels with a single vowel
+        return re.sub(r'([aeiouyAEIOUY])\1{1,}', r'\1', text)
+
     async def Say(self, player: Player, language: str, tld: str, message: str) -> int:
+        # Collapse repeated vowels before passing to gTTS
+        message = self.collapse_repeated_vowels(message)
         google_text_to_speech = gtts.gTTS(text=message, tld=tld, lang=language, lang_check=False)
 
         temp_file = tempfile.NamedTemporaryFile(delete=False)
@@ -925,6 +1001,102 @@ class Say(BaseCommand):
         asyncio.ensure_future(self.Say(player, language, tld, message[1]))
         return 0
 
+
+class TranslateSay(BaseCommand):
+    try:
+        VALID_LANGUAGES = [lang for lang in gtts.lang.tts_langs().keys()]
+    except Exception:
+        VALID_LANGUAGES = [
+            "af", "ar", "bn", "bs", "ca", "cs", "cy", "da", "de", "el", "en", "eo", "es", "et", "fi", "fr", "gu",
+            "hi", "hr", "hu", "hy", "id", "is", "it", "ja", "jw", "km", "kn", "ko", "la", "lv", "mk", "ml", "mr",
+            "my", "ne", "nl", "no", "pl", "pt", "ro", "ru", "si", "sk", "sq", "sr", "su", "sv", "sw", "ta", "te",
+            "th", "tl", "tr", "uk", "ur", "vi", "zh-CN", "zh-TW", "zh"
+        ]
+
+    def __init__(
+        self,
+        torchlight: Torchlight,
+        access_manager: AccessManager,
+        player_manager: PlayerManager,
+        audio_manager: AudioManager,
+        trigger_manager: TriggerManager,
+    ) -> None:
+        super().__init__(
+            torchlight,
+            access_manager,
+            player_manager,
+            audio_manager,
+            trigger_manager,
+        )
+        self.translator = googletrans.Translator()
+        self.triggers = []
+        # Add triggers for all supported languages
+        for lang in self.VALID_LANGUAGES:
+            self.triggers.append(f"!tsay{lang}")
+
+    async def TranslateAndSay(self, player: Player, target_lang: str, tld: str, message: str) -> int:
+
+        # Check if language is supported by gTTS
+        supported_langs = gtts.lang.tts_langs()
+        if target_lang not in supported_langs:
+            self.torchlight.SayPrivate(player, f"Sorry, TTS for '{target_lang}' is not supported.")
+            return 1
+
+        # Translate the message
+        try:
+            translated = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.translator.translate(message, dest=target_lang)
+            )
+            translated_text = translated.text
+        except Exception as e:
+            self.torchlight.SayPrivate(player, f"Translation failed: {e}")
+            return 1
+
+        # Generate TTS
+        try:
+            tts = gtts.gTTS(text=translated_text, lang=target_lang, tld=tld, lang_check=False)
+            temp_file = tempfile.NamedTemporaryFile(delete=False)
+            tts.write_to_fp(temp_file)
+            temp_file.close()
+        except Exception as e:
+            self.torchlight.SayPrivate(player, f"TTS failed: {e}")
+            return 1
+
+        # Play the audio
+        audio_clip = self.audio_manager.AudioClip(player, Path(temp_file.name).absolute().as_uri())
+        if not audio_clip:
+            os.unlink(temp_file.name)
+            return 1
+
+        if audio_clip.Play():
+            audio_clip.audio_player.AddCallback("Stop", lambda: os.unlink(temp_file.name))
+            return 0
+        else:
+            os.unlink(temp_file.name)
+            return 1
+
+    async def _func(self, message: list[str], player: Player) -> int:
+        self.logger.debug(sys._getframe().f_code.co_name + " " + str(message))
+
+        if self.check_disabled(player):
+            return -1
+
+        if not message[1]:
+            return 1
+
+        command = message[0]
+        if not command.startswith("!tsay"):
+            return 1
+
+        target_lang = command[5:]
+        tld = "com"
+
+        if target_lang not in self.VALID_LANGUAGES:
+            self.torchlight.SayPrivate(player, f"{{darkred}}[TranslateSay]{{default}} Language '{target_lang}' not supported.")
+            return 1
+
+        asyncio.ensure_future(self.TranslateAndSay(player, target_lang, tld, message[1]))
+        return 0    
 
 class DECTalk(BaseCommand):
     async def Say(self, player: Player, message: str) -> int:
@@ -979,6 +1151,17 @@ class Stop(BaseCommand):
 
         self.audio_manager.Stop(player, message[1])
         return True
+
+class StopAll(BaseCommand):
+    async def _func(self, message: list[str], player: Player) -> int:
+        required_level = self.get_config().get("level", 0)
+        if player.admin.level < required_level:
+            self.torchlight.SayPrivate(player, "You do not have permission to use !stopall.")
+            return 1
+
+        self.torchlight.audio_manager.StopAll()
+        self.torchlight.SayChat("{darkred}[Torchlight]{default} All audio has been force-stopped by admin command.")
+        return 0
 
 
 class Enable(BaseCommand):
