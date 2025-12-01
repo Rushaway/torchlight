@@ -61,4 +61,8 @@ yarl==1.9.4
 yt-dlp>=2024.04.09
     # via torchlight (pyproject.toml)
 
-googletrans==4.0.0-rc1
+translatepy==2.3
+    # via torchlight (pyproject.toml)
+
+langdetect==1.0.9
+    # via translatepy

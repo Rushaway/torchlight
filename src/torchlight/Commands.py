@@ -8,8 +8,8 @@ import secrets
 import sys
 import tempfile
 import traceback
-import googletrans
-from googletrans import Translator
+from translatepy import Translator
+from langdetect import detect
 import yt_dlp
 from pathlib import Path
 from re import Match, Pattern
@@ -953,7 +953,7 @@ class Say(BaseCommand):
 
     async def Say(self, player: Player, language: str, tld: str, message: str) -> int:
         # Collapse repeated vowels before passing to gTTS
-        message = self.collapse_repeated_vowels(message)
+        # message = self.collapse_repeated_vowels(message)
         google_text_to_speech = gtts.gTTS(text=message, tld=tld, lang=language, lang_check=False)
 
         temp_file = tempfile.NamedTemporaryFile(delete=False)
@@ -1003,8 +1003,9 @@ class Say(BaseCommand):
 
 
 class TranslateSay(BaseCommand):
+
     try:
-        VALID_LANGUAGES = [lang for lang in gtts.lang.tts_langs().keys()]
+        VALID_LANGUAGES = list(gtts.lang.tts_langs().keys())
     except Exception:
         VALID_LANGUAGES = [
             "af", "ar", "bn", "bs", "ca", "cs", "cy", "da", "de", "el", "en", "eo", "es", "et", "fi", "fr", "gu",
@@ -1013,46 +1014,35 @@ class TranslateSay(BaseCommand):
             "th", "tl", "tr", "uk", "ur", "vi", "zh-CN", "zh-TW", "zh"
         ]
 
-    def __init__(
-        self,
-        torchlight: Torchlight,
-        access_manager: AccessManager,
-        player_manager: PlayerManager,
-        audio_manager: AudioManager,
-        trigger_manager: TriggerManager,
-    ) -> None:
-        super().__init__(
-            torchlight,
-            access_manager,
-            player_manager,
-            audio_manager,
-            trigger_manager,
-        )
-        self.translator = googletrans.Translator()
-        self.triggers = []
-        # Add triggers for all supported languages
-        for lang in self.VALID_LANGUAGES:
-            self.triggers.append(f"!tsay{lang}")
+    def __init__(self, torchlight, access_manager, player_manager, audio_manager, trigger_manager):
+        super().__init__(torchlight, access_manager, player_manager, audio_manager, trigger_manager)
 
-    async def TranslateAndSay(self, player: Player, target_lang: str, tld: str, message: str) -> int:
+        self.translator = Translator()
+        self.triggers = [f"!tsay{lang}" for lang in self.VALID_LANGUAGES]
 
-        # Check if language is supported by gTTS
+    async def TranslateAndSay(self, player, target_lang: str, tld: str, message: str) -> int:
+
         supported_langs = gtts.lang.tts_langs()
+
         if target_lang not in supported_langs:
             self.torchlight.SayPrivate(player, f"Sorry, TTS for '{target_lang}' is not supported.")
             return 1
 
-        # Translate the message
+        # ----------------------------------------------------------
+        # 1. Translate text using TranslatePy
+        # ----------------------------------------------------------
         try:
             translated = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self.translator.translate(message, dest=target_lang)
+                None, lambda: self.translator.translate(message, target_lang)
             )
-            translated_text = translated.text
+            translated_text = translated.result  # TranslatePy uses .result
         except Exception as e:
             self.torchlight.SayPrivate(player, f"Translation failed: {e}")
             return 1
 
-        # Generate TTS
+        # ----------------------------------------------------------
+        # 2. Generate TTS from translated text
+        # ----------------------------------------------------------
         try:
             tts = gtts.gTTS(text=translated_text, lang=target_lang, tld=tld, lang_check=False)
             temp_file = tempfile.NamedTemporaryFile(delete=False)
@@ -1062,8 +1052,11 @@ class TranslateSay(BaseCommand):
             self.torchlight.SayPrivate(player, f"TTS failed: {e}")
             return 1
 
-        # Play the audio
+        # ----------------------------------------------------------
+        # 3. Play audio
+        # ----------------------------------------------------------
         audio_clip = self.audio_manager.AudioClip(player, Path(temp_file.name).absolute().as_uri())
+
         if not audio_clip:
             os.unlink(temp_file.name)
             return 1
@@ -1071,12 +1064,12 @@ class TranslateSay(BaseCommand):
         if audio_clip.Play():
             audio_clip.audio_player.AddCallback("Stop", lambda: os.unlink(temp_file.name))
             return 0
-        else:
-            os.unlink(temp_file.name)
-            return 1
 
-    async def _func(self, message: list[str], player: Player) -> int:
-        self.logger.debug(sys._getframe().f_code.co_name + " " + str(message))
+        os.unlink(temp_file.name)
+        return 1
+
+    async def _func(self, message: list[str], player):
+        self.logger.debug("_func " + str(message))
 
         if self.check_disabled(player):
             return -1
@@ -1085,6 +1078,7 @@ class TranslateSay(BaseCommand):
             return 1
 
         command = message[0]
+
         if not command.startswith("!tsay"):
             return 1
 
@@ -1092,11 +1086,14 @@ class TranslateSay(BaseCommand):
         tld = "com"
 
         if target_lang not in self.VALID_LANGUAGES:
-            self.torchlight.SayPrivate(player, f"{{darkred}}[TranslateSay]{{default}} Language '{target_lang}' not supported.")
+            self.torchlight.SayPrivate(
+                player,
+                f"{{darkred}}[TranslateSay]{{default}} Language '{target_lang}' not supported."
+            )
             return 1
 
         asyncio.ensure_future(self.TranslateAndSay(player, target_lang, tld, message[1]))
-        return 0    
+        return 0
 
 class DECTalk(BaseCommand):
     async def Say(self, player: Player, message: str) -> int:
