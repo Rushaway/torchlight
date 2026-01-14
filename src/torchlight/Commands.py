@@ -14,6 +14,7 @@ import yt_dlp
 from pathlib import Path
 from re import Match, Pattern
 from typing import Any
+import time
 
 import aiohttp
 import defusedxml.ElementTree as etree
@@ -635,76 +636,145 @@ class VoiceTrigger(BaseCommand):
         return audio_clip.Play()
 
     def get_sound_path(self, player: Player, voice_trigger: str, trigger_number: str) -> str | None:
-        level = player.admin.level
-
-        if voice_trigger[0] != "!" and level < self.torchlight.config["Command"]["VoiceTriggerReserved"]["level"]:
+        """
+        Get sound path for a voice trigger with proper access level checks.
+        
+        Args:
+            player: Player making the request
+            voice_trigger: The trigger command (e.g., "_legend", "!test", "#tempest")
+            trigger_number: Optional number or search term for lists
+            
+        Returns:
+            Sound file path or None if not allowed/not found
+        """
+        if voice_trigger not in self.trigger_manager.voice_triggers:
             return None
-
-        sound = None
-
-        sounds = self.trigger_manager.voice_triggers[voice_trigger]
-
-        try:
-            num = int(trigger_number)
-        except ValueError:
-            num = None
-
-        if isinstance(sounds, list):
-            if num and num > 0 and num <= len(sounds):
-                sound = sounds[num - 1]
-
-            elif trigger_number:
-                searching = trigger_number.startswith("?")
-                search = trigger_number[1:] if searching else trigger_number
-                sound = None
-                names = []
-                matches = []
-                for sound in sounds:
-                    name = os.path.splitext(os.path.basename(sound))[0]
-                    names.append(name)
-
-                    if search and search in name.lower():
-                        matches.append((name, sound))
-
-                if matches:
-                    matches.sort(key=lambda t: len(t[0]))
-                    mlist = [t[0] for t in matches]
-                    if searching:
-                        self.torchlight.SayPrivate(
-                            player,
-                            "{} results: {}".format(len(mlist), ", ".join(mlist)),
-                        )
-                        return None
-
-                    sound = matches[0][1]
-                    if len(matches) > 1:
-                        self.torchlight.SayPrivate(
-                            player,
-                            "Multiple matches: {}".format(", ".join(mlist)),
-                        )
-
-                if not sound and not num:
-                    if not searching:
-                        self.torchlight.SayPrivate(
-                            player,
-                            f"Couldn't find {trigger_number} in list of sounds.",
-                        )
-                    self.torchlight.SayPrivate(player, ", ".join(names))
-                    return None
-
-            elif num:
+        
+        player_level = player.admin.level
+        reserved_level = self.torchlight.config["Command"]["VoiceTriggerReserved"]["level"]
+        prefix = voice_trigger[0]
+        reserved_prefixes = ["_", "#"]
+        if prefix in reserved_prefixes:
+            if player_level < reserved_level:
                 self.torchlight.SayPrivate(
                     player,
-                    f"Number {num} is out of bounds, max {len(sounds)}.",
+                    f"Trigger '{voice_trigger}' requires level {reserved_level} or higher. "
+                    f"Your current level is {player_level}."
                 )
                 return None
-
-            else:
-                sound = secrets.choice(sounds)
+        
+        voice_trigger_level = self.torchlight.config["Command"]["VoiceTrigger"]["level"]
+        if player_level < voice_trigger_level:
+            self.torchlight.SayPrivate(
+                player,
+                f"Voice triggers require level {voice_trigger_level} or higher. "
+                f"Your current level is {player_level}."
+            )
+            return None
+        
+        sounds = self.trigger_manager.voice_triggers[voice_trigger]
+        
+        try:
+            num = int(trigger_number) if trigger_number else None
+        except ValueError:
+            num = None
+        
+        if isinstance(sounds, list):
+            return self._handle_sound_list(player, voice_trigger, sounds, trigger_number, num)
         else:
-            sound = sounds
+            return sounds
 
-        return sound
+    def _handle_sound_list(self, player: Player, voice_trigger: str, sounds: list[str], 
+                        trigger_input: str, num: int | None) -> str | None:
+        """
+        Handle selection from a list of sounds.
+        
+        Args:
+            player: Player making the request
+            voice_trigger: The trigger command
+            sounds: List of sound file paths
+            trigger_input: User input (number or search term)
+            num: Parsed number if input was numeric
+            
+        Returns:
+            Selected sound file path or None
+        """
+        if num is not None:
+            if 1 <= num <= len(sounds):
+                return sounds[num - 1]
+            else:
+                self.torchlight.SayPrivate(
+                    player,
+                    f"Number {num} is out of range. Choose 1-{len(sounds)} for '{voice_trigger}'."
+                )
+                return None
+        
+        if trigger_input:
+            return self._search_sound_list(player, voice_trigger, sounds, trigger_input)
+        
+        return secrets.choice(sounds)
+
+    def _search_sound_list(self, player: Player, voice_trigger: str, sounds: list[str], 
+                        search_term: str) -> str | None:
+        """
+        Search through sound list by filename.
+        
+        Args:
+            player: Player making the request
+            voice_trigger: The trigger command
+            sounds: List of sound file paths
+            search_term: Search term (with optional ? prefix for search-only)
+            
+        Returns:
+            Matching sound file path or None
+        """
+        is_search_only = search_term.startswith("?")
+        actual_search = search_term[1:] if is_search_only else search_term
+        
+        sound_names = []
+        matches = []
+        
+        for sound_path in sounds:
+            sound_name = os.path.splitext(os.path.basename(sound_path))[0]
+            sound_names.append(sound_name)
+            
+            if actual_search and actual_search.lower() in sound_name.lower():
+                matches.append((sound_name, sound_path))
+        
+        if matches:
+            matches.sort(key=lambda t: len(t[0]))
+            match_names = [name for name, _ in matches]
+            if is_search_only:
+                self.torchlight.SayPrivate(
+                    player,
+                    f"Found {len(matches)} matches for '{actual_search}' in '{voice_trigger}': "
+                    f"{', '.join(match_names[:10])}"
+                )
+                return None
+            
+            best_match = matches[0][1]
+            if len(matches) > 1:
+                self.torchlight.SayPrivate(
+                    player,
+                    f"Multiple matches found for '{actual_search}': {', '.join(match_names[:5])}. "
+                    f"Using '{match_names[0]}'."
+                )
+            
+            return best_match
+        
+        if not is_search_only:
+            self.torchlight.SayPrivate(
+                player,
+                f"No matches found for '{actual_search}' in '{voice_trigger}'."
+            )
+        
+        self.torchlight.SayPrivate(
+            player,
+            f"Available sounds for '{voice_trigger}': {', '.join(sound_names[:15])}"
+            + ("..." if len(sound_names) > 15 else "")
+        )
+        
+        return None
 
 
 class Random(VoiceTrigger):
@@ -740,6 +810,41 @@ class PlayMusic(BaseCommand):
             message[1] = message[1].replace("!last", self.torchlight.last_url)
 
         url = message[1]
+        if URLFilter.youtube_regex.search(url):
+            try:
+                command_config = self.torchlight.config["Command"]["YouTubeSearch"]
+                proxy = command_config.get("parameters", {}).get("proxy", "")
+                cookies = command_config.get("parameters", {}).get("cookies", None)
+                
+                ydl_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'extract_flat': False,
+                    'skip_download': True,
+                    'forceurl': True,
+                    'format': 'bestaudio/best',
+                    'source_address': '0.0.0.0',
+                }
+                
+                if proxy:
+                    ydl_opts['proxy'] = proxy
+                if cookies:
+                    ydl_opts['cookiefile'] = cookies
+                
+                ydl = yt_dlp.YoutubeDL(ydl_opts)
+                
+                loop = asyncio.get_event_loop()
+                info = await loop.run_in_executor(
+                    None,
+                    lambda: ydl.extract_info(url, download=False)
+                )
+                
+                if info and 'url' in info:
+                    audio_url = info['url']
+                    self.torchlight.SayChat(f"Found: {info.get('title', 'Unknown')}")
+                    url = audio_url
+            except Exception as e:
+                self.logger.error(f"Error extracting YouTube URL: {e}")
 
         real_time = get_url_real_time(url=url)
         audio_clip = self.audio_manager.AudioClip(player, url)
@@ -760,107 +865,44 @@ class YouTubeSearch(BaseCommand):
         proxy = command_config.get("parameters", {}).get("proxy", "")
         cookies = command_config.get("parameters", {}).get("cookies", None)
 
-        input_keywords = message[1].strip()
-        if not input_keywords:
-            self.torchlight.SayPrivate(player, "Please provide a YouTube URL or search query.")
-            return 1
-
-        # Detect if input is a YouTube URL or a search query
+        input_keywords = message[1]
+        
         if URLFilter.youtube_regex.search(input_keywords):
             input_url = input_keywords
         else:
-            input_url = f"ytsearch3: {input_keywords}"
+            input_url = f"ytsearch:{input_keywords}"
 
         real_time = get_url_real_time(url=input_url)
 
-        # Fetch info using yt-dlp
         try:
-            if cookies:
-                info = get_url_youtube_info(url=input_url, proxy=proxy, cookies=cookies)
-            else:
-                info = get_url_youtube_info(url=input_url, proxy=proxy)
+            cookies_path = None
+            if cookies and os.path.exists(cookies):
+                cookies_path = cookies
+                self.logger.info(f"Using cookies from: {cookies_path}")
+            
+            info = get_url_youtube_info(url=input_url, proxy=proxy, cookies=cookies_path)
         except Exception as exc:
-            self.logger.error(f"Failed to extract YouTube info from: {input_url}")
+            self.logger.error(f"Failed to extract youtube info from: {input_url}")
             self.logger.error(exc)
             self.torchlight.SayPrivate(
                 player,
-                "An error occurred while trying to retrieve YouTube metadata.",
+                "Error retrieving YouTube metadata.",
             )
             return 1
 
-        # If info is a playlist/search result, pick the first valid entry
-        if "entries" in info and isinstance(info["entries"], list) and info["entries"]:
-            entry = None
-            try:
-                entry = get_first_valid_entry(info["entries"], proxy=proxy, cookies=cookies)
-            except Exception:
-                entry = info["entries"][0]
-            if entry:
-                info = entry
+        if "title" not in info and "url" in info:
+            info = get_url_youtube_info(url=info["url"], proxy=proxy, cookies=cookies_path)
+        if info.get("extractor_key") == "YoutubeSearch":
+            info = get_first_valid_entry(entries=info["entries"], proxy=proxy, cookies=cookies_path)
 
-        # Fallback: Try to resolve incomplete info dicts
-        for _ in range(2):
-            if "title" not in info and "url" in info:
-                self.logger.warning(f"Info missing title, retrying with url: {info['url']}")
-                try:
-                    if cookies:
-                        info = get_url_youtube_info(url=info["url"], proxy=proxy, cookies=cookies)
-                    else:
-                        info = get_url_youtube_info(url=info["url"], proxy=proxy)
-                except Exception as exc:
-                    self.logger.error(f"Failed to extract YouTube info from: {info.get('url', input_url)}")
-                    self.logger.error(exc)
-                    self.torchlight.SayPrivate(
-                        player,
-                        "An error occurred while trying to retrieve YouTube metadata.",
-                    )
-                    return 1
-            elif info.get("extractor_key") == "YoutubeSearch" and "url" in info:
-                self.logger.warning(f"Extractor key is YoutubeSearch, retrying with url: {info['url']}")
-                try:
-                    if cookies:
-                        info = get_url_youtube_info(url=info["url"], proxy=proxy, cookies=cookies)
-                    else:
-                        info = get_url_youtube_info(url=info["url"], proxy=proxy)
-                except Exception as exc:
-                    self.logger.error(f"Failed to extract YouTube info from: {info.get('url', input_url)}")
-                    self.logger.error(exc)
-                    self.torchlight.SayPrivate(
-                        player,
-                        "An error occurred while trying to retrieve YouTube metadata.",
-                    )
-                    return 1
-            else:
-                break
-
-        self.logger.debug(f"YouTube info dict: {info}")
-
-        # If still no title or url, fail gracefully
-        if "title" not in info or "url" not in info:
-            self.torchlight.SayPrivate(player, "Could not find a playable YouTube video for your query.")
-            return 1
-
-        # Check for formats before trying to play
-        if "formats" not in info or not isinstance(info["formats"], list):
-            self.torchlight.SayPrivate(
-                player,
-                "This video cannot be played without valid YouTube cookies. "
-                "Please export your cookies from your browser and add them to your config. "
-                "See: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
-            )
-            self.logger.error(f"YouTube info dict missing formats: {info}")
-            return 1
-
-        title = info.get("title", "Unknown Title")
+        title = info["title"]
         url = get_audio_format(info=info)
-        duration = str(datetime.timedelta(seconds=info.get("duration", 0)))
-        views = int(info.get("view_count", 0))
-
-        # Banned keywords logic
         title_words = title.split()
         keywords_banned: list[str] = []
+
         if "parameters" in command_config and "keywords_banned" in command_config["parameters"]:
             keywords_banned = command_config["parameters"]["keywords_banned"]
+
         for keyword_banned in keywords_banned:
             for title_word in title_words:
                 if keyword_banned.lower() in title_word.lower():
@@ -869,15 +911,187 @@ class YouTubeSearch(BaseCommand):
                     )
                     return 1
 
+        duration = str(datetime.timedelta(seconds=info["duration"]))
+        views = int(info["view_count"])
         self.torchlight.SayChat(f"{{darkred}}[YouTube]{{default}} {title} | {duration} | {views}")
-
-        audio_clip = self.audio_manager.AudioClip(player, url)
-        if not audio_clip:
-            self.torchlight.SayPrivate(player, "Failed to create audio clip for playback.")
+        if cookies and os.path.exists(cookies):
+            config_dir = os.path.dirname(cookies)
+            torchlight_root = os.path.dirname(config_dir)
+        else:
+            current_file = os.path.abspath(__file__)
+            if 'src/torchlight' in current_file:
+                torchlight_root = os.path.dirname(os.path.dirname(current_file))
+            else:
+                torchlight_root = os.getcwd()
+        
+        downloads_dir = os.path.join(torchlight_root, "downloads")
+        os.makedirs(downloads_dir, exist_ok=True)
+        
+        video_id = info.get('id', 'unknown')
+        timestamp = int(time.time())
+        filename = f"youtube_{video_id}_{timestamp}.mp3"
+        temp_path = os.path.join(downloads_dir, filename)
+        
+        self.logger.info(f"Will download to: {temp_path}")
+        self.torchlight.SayChat(f"{{darkblue}}[Torchlight]{{default}} Downloading audio...", player)
+        
+        try:
+            cmd = [
+                'yt-dlp',
+                '-x',
+                '--audio-format', 'mp3',
+                '--audio-quality', '0',
+                '--no-playlist',
+                '--output', temp_path,
+                '--quiet',
+                '--no-warnings',
+                '--force-overwrites',
+            ]
+            
+            if cookies_path:
+                cmd.extend(['--cookies', cookies_path])
+            
+            if proxy:
+                cmd.extend(['--proxy', proxy])
+            youtube_url = info.get('webpage_url', info.get('url', ''))
+            if not youtube_url:
+                self.logger.error("No YouTube URL found in info")
+                self.torchlight.SayPrivate(player, "Error: No YouTube URL found.")
+                return 1
+            
+            cmd.append(youtube_url)
+            
+            self.logger.info(f"Running command: {' '.join(cmd)}")
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+            except asyncio.TimeoutError:
+                self.logger.error("Download timed out after 2 minutes")
+                process.kill()
+                self.torchlight.SayPrivate(player, "Download timed out. Try a shorter video.")
+                return 1
+            
+            if process.returncode != 0:
+                error_msg = stderr.decode('utf-8', errors='ignore') if stderr else "Unknown error"
+                self.logger.error(f"Download failed with code {process.returncode}: {error_msg[:200]}")
+                
+                if "Private video" in error_msg or "Sign in" in error_msg:
+                    self.torchlight.SayPrivate(player, "Video is private or requires login. Try different video.")
+                elif "Unavailable" in error_msg:
+                    self.torchlight.SayPrivate(player, "Video is unavailable in your region.")
+                else:
+                    self.torchlight.SayPrivate(player, f"Download failed: {error_msg[:100]}")
+                
+                return 1
+            
+            if not os.path.exists(temp_path):
+                temp_path_no_ext = temp_path.replace('.mp3', '')
+                if os.path.exists(temp_path_no_ext):
+                    temp_path = temp_path_no_ext
+                else:
+                    import glob
+                    pattern = os.path.join(downloads_dir, f"youtube_{video_id}_*")
+                    files = glob.glob(pattern)
+                    if files:
+                        temp_path = files[0]
+                    else:
+                        self.logger.error(f"File not created at {temp_path}")
+                        self.torchlight.SayPrivate(player, "Download failed: File not created.")
+                        return 1
+            
+            file_size = os.path.getsize(temp_path)
+            if file_size == 0:
+                self.logger.error(f"File is empty: {temp_path}")
+                self.torchlight.SayPrivate(player, "Download failed: File is empty.")
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                return 1
+            
+            file_size_mb = file_size / 1024 / 1024
+            self.logger.info(f"Downloaded {file_size_mb:.1f}MB to {temp_path}")
+            if file_size_mb < 1:
+                size_str = f"{file_size/1024:.0f}KB"
+            else:
+                size_str = f"{file_size_mb:.1f}MB"
+            
+            self.torchlight.SayChat(f"{{darkgreen}}[Torchlight]{{default}} Downloaded ({size_str})! Playing now...", player)
+            
+            audio_clip = self.audio_manager.AudioClip(player, f"file://{temp_path}")
+            if not audio_clip:
+                self.logger.error(f"Failed to create audio clip for {temp_path}")
+                self.torchlight.SayPrivate(player, "Failed to create audio clip for playback.")
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                return 1
+            def cleanup_temp_file():
+                async def delayed_cleanup():
+                    await asyncio.sleep(2)
+                    try:
+                        if os.path.exists(temp_path):
+                            os.unlink(temp_path)
+                            self.logger.info(f"Cleaned up: {temp_path}")
+                            self._cleanup_old_files(downloads_dir, keep_last=10)
+                    except Exception as e:
+                        self.logger.error(f"Cleanup failed: {e}")
+                asyncio.ensure_future(delayed_cleanup())
+            
+            audio_clip.audio_player.AddCallback("Stop", cleanup_temp_file)
+            
+            self.torchlight.last_url = url
+            result = audio_clip.Play(real_time)
+            if result:
+                return result
+            else:
+                self.logger.error(f"Play failed for {temp_path}")
+                self.torchlight.SayPrivate(player, "Playback failed.")
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                return 1
+            
+        except Exception as e:
+            self.logger.error(f"Error downloading/playing YouTube audio: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            self.torchlight.SayPrivate(player, f"Error: {str(e)[:100]}")
+            
+            try:
+                if 'temp_path' in locals() and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            except:
+                pass
+            
             return 1
-
-        self.torchlight.last_url = url
-        return audio_clip.Play(real_time)
+    
+    def _cleanup_old_files(self, directory: str, keep_last: int = 10):
+        """Clean up old files, keeping only the most recent ones"""
+        try:
+            files = []
+            for filename in os.listdir(directory):
+                filepath = os.path.join(directory, filename)
+                if os.path.isfile(filepath) and filename.startswith('youtube_'):
+                    files.append((filepath, os.path.getmtime(filepath)))
+            files.sort(key=lambda x: x[1], reverse=True)
+            for filepath, _ in files[keep_last:]:
+                try:
+                    os.unlink(filepath)
+                    self.logger.info(f"Cleaned up old file: {os.path.basename(filepath)}")
+                except Exception as e:
+                    self.logger.error(f"Failed to delete old file {filepath}: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error cleaning up old files: {e}")
 
 
 class Say(BaseCommand):
@@ -1145,19 +1359,31 @@ class DECTalk(BaseCommand):
 class Stop(BaseCommand):
     async def _func(self, message: list[str], player: Player) -> int:
         self.logger.debug(sys._getframe().f_code.co_name + " " + str(message))
-
-        self.audio_manager.Stop(player, message[1])
-        return True
+        extra = ""
+        if len(message) > 1:
+            extra = message[1].strip()
+        
+        self.logger.info(f"Stop command called by {player.name}, extra='{extra}'")
+        self.audio_manager.Stop(player, extra)
+        return 0
 
 class StopAll(BaseCommand):
     async def _func(self, message: list[str], player: Player) -> int:
-        required_level = self.get_config().get("level", 0)
-        if player.admin.level < required_level:
-            self.torchlight.SayPrivate(player, "You do not have permission to use !stopall.")
+        self.logger.debug(sys._getframe().f_code.co_name + " " + str(message))
+        required_level = self.get_config()["level"]
+        player_level = player.admin.level
+        if player_level < required_level:
+            self.torchlight.SayPrivate(
+                player,
+                f"{{darkred}}[Torchlight]{{default}} This command requires level {required_level} or higher. Your level is {player_level}."
+            )
             return 1
-
-        self.torchlight.audio_manager.StopAll()
-        self.torchlight.SayChat("{darkred}[Torchlight]{default} All audio has been force-stopped by admin command.")
+        count = len(self.audio_manager.audio_clips)
+        self.audio_manager.StopAll()
+        
+        self.torchlight.SayChat(
+            f"{{darkred}}[Torchlight]{{default}} All audio ({count} clips) stopped by {player.name}."
+        )
         return 0
 
 

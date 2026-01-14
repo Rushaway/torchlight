@@ -14,6 +14,7 @@ class AudioClip:
         uri: str,
         audio_player: FFmpegAudioPlayer,
         torchlight: Torchlight,
+        
     ):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.torchlight: Torchlight = torchlight

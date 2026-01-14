@@ -138,17 +138,13 @@ def get_first_valid_entry(entries: list[Any], proxy: str = "", cookies: str = No
 
 
 def get_audio_format(info: dict[str, Any]) -> str:
-    if "formats" not in info or not isinstance(info["formats"], list):
-        raise Exception("No audio formats found in video info. This video may require cookies or is not available.")
+    for format in info["formats"]:
+        if "audio_channels" in format:
+            logger.debug(json.dumps(format, indent=2))
+            return format["url"]
+    for format in info["formats"]:
+        if format.get("acodec") != "none":
+            logger.debug(f"Found audio format: {format.get('format_note', 'unknown')}")
+            return format["url"]
     
-    for fmt in info["formats"]:
-        if "audio_channels" in fmt and fmt.get("url"):
-            logger.debug(json.dumps(fmt, indent=2))
-            return fmt["url"]
-
-    for fmt in info["formats"]:
-        if fmt.get("acodec") != "none" and fmt.get("url"):
-            logger.debug(json.dumps(fmt, indent=2))
-            return fmt["url"]
-
-    raise Exception("No compatible audio format found, try something else or provide cookies.")
+    raise Exception("No compatible audio format found, try something else")
