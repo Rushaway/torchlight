@@ -15,6 +15,7 @@ from pathlib import Path
 from re import Match, Pattern
 from typing import Any
 import time
+import subprocess
 
 import aiohttp
 import defusedxml.ElementTree as etree
@@ -914,6 +915,7 @@ class YouTubeSearch(BaseCommand):
         duration = str(datetime.timedelta(seconds=info["duration"]))
         views = int(info["view_count"])
         self.torchlight.SayChat(f"{{darkred}}[YouTube]{{default}} {title} | {duration} | {views}")
+        
         if cookies and os.path.exists(cookies):
             config_dir = os.path.dirname(cookies)
             torchlight_root = os.path.dirname(config_dir)
@@ -929,30 +931,40 @@ class YouTubeSearch(BaseCommand):
         
         video_id = info.get('id', 'unknown')
         timestamp = int(time.time())
-        filename = f"youtube_{video_id}_{timestamp}.mp3"
-        temp_path = os.path.join(downloads_dir, filename)
         
-        self.logger.info(f"Will download to: {temp_path}")
+        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_', '.', '(', ')', '｜')).strip()
+        safe_title = safe_title[:100]
+        output_template = os.path.join(downloads_dir, f"{safe_title}.%(ext)s")
+        temp_path = output_template.replace('%(ext)s', 'mp3')
+        
+        self.logger.info(f"Will download to: {output_template}")
         self.torchlight.SayChat(f"{{darkblue}}[Torchlight]{{default}} Downloading audio...", player)
         
         try:
             cmd = [
                 'yt-dlp',
-                '-x',
+                '--js-runtime', 'node',
+                '--remote-components', 'ejs:github',
+                '-f', 'bestaudio',
+                '-x', 
                 '--audio-format', 'mp3',
-                '--audio-quality', '0',
+                '--audio-quality', '192',
+                '--embed-metadata',
+                '--embed-thumbnail',
                 '--no-playlist',
-                '--output', temp_path,
-                '--quiet',
                 '--no-warnings',
-                '--force-overwrites',
+                '-o', output_template,
+                url
             ]
             
             if cookies_path:
-                cmd.extend(['--cookies', cookies_path])
+                cmd.insert(1, '--cookies')
+                cmd.insert(2, cookies_path)
+                self.logger.info("🍪 Using cookies file")
             
             if proxy:
                 cmd.extend(['--proxy', proxy])
+            
             youtube_url = info.get('webpage_url', info.get('url', ''))
             if not youtube_url:
                 self.logger.error("No YouTube URL found in info")
@@ -961,103 +973,134 @@ class YouTubeSearch(BaseCommand):
             
             cmd.append(youtube_url)
             
-            self.logger.info(f"Running command: {' '.join(cmd)}")
+            self.logger.info(f"Running command: {' '.join(cmd[:12])}...")
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT 
             )
             
-            try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
-            except asyncio.TimeoutError:
-                self.logger.error("Download timed out after 2 minutes")
-                process.kill()
-                self.torchlight.SayPrivate(player, "Download timed out. Try a shorter video.")
-                return 1
+            output_lines = []
+            converting_to_mp3 = False
             
-            if process.returncode != 0:
-                error_msg = stderr.decode('utf-8', errors='ignore') if stderr else "Unknown error"
-                self.logger.error(f"Download failed with code {process.returncode}: {error_msg[:200]}")
-                
-                if "Private video" in error_msg or "Sign in" in error_msg:
-                    self.torchlight.SayPrivate(player, "Video is private or requires login. Try different video.")
-                elif "Unavailable" in error_msg:
-                    self.torchlight.SayPrivate(player, "Video is unavailable in your region.")
-                else:
-                    self.torchlight.SayPrivate(player, f"Download failed: {error_msg[:100]}")
-                
-                return 1
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                line_str = line.decode('utf-8', errors='ignore').strip()
+                if line_str:
+                    output_lines.append(line_str)
+                    print(f"  {line_str}") 
+                    
+                    if '[download]' in line_str and '.webm' in line_str:
+                        self.logger.info("📥 Webm download started...")
+                    
+                    if '[ExtractAudio]' in line_str:
+                        self.logger.info("🔧 Converting webm to mp3...")
+                        converting_to_mp3 = True
             
-            if not os.path.exists(temp_path):
-                temp_path_no_ext = temp_path.replace('.mp3', '')
-                if os.path.exists(temp_path_no_ext):
-                    temp_path = temp_path_no_ext
-                else:
-                    import glob
-                    pattern = os.path.join(downloads_dir, f"youtube_{video_id}_*")
-                    files = glob.glob(pattern)
-                    if files:
-                        temp_path = files[0]
-                    else:
-                        self.logger.error(f"File not created at {temp_path}")
-                        self.torchlight.SayPrivate(player, "Download failed: File not created.")
-                        return 1
+            await process.wait()
             
-            file_size = os.path.getsize(temp_path)
-            if file_size == 0:
-                self.logger.error(f"File is empty: {temp_path}")
-                self.torchlight.SayPrivate(player, "Download failed: File is empty.")
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
-                return 1
+            if converting_to_mp3:
+                self.logger.info("⏳ Waiting for mp3 conversion to complete...")
+                for i in range(30): 
+                    if os.path.exists(temp_path):
+                        await asyncio.sleep(1) 
+                        file_size = os.path.getsize(temp_path)
+                        if file_size > 100000:
+                            self.logger.info(f"✅ MP3 ready after {i+1} seconds")
+                            break
+                    await asyncio.sleep(1)
             
-            file_size_mb = file_size / 1024 / 1024
-            self.logger.info(f"Downloaded {file_size_mb:.1f}MB to {temp_path}")
-            if file_size_mb < 1:
-                size_str = f"{file_size/1024:.0f}KB"
-            else:
-                size_str = f"{file_size_mb:.1f}MB"
+            await asyncio.sleep(2)
+            found_file = None
+            for ext in ['.mp3', '.webm', '.m4a']:
+                test_path = output_template.replace('%(ext)s', ext)
+                if os.path.exists(test_path):
+                    found_file = test_path
+                    break
             
-            self.torchlight.SayChat(f"{{darkgreen}}[Torchlight]{{default}} Downloaded ({size_str})! Playing now...", player)
+            if not found_file:
+                base_name = output_template.replace('%(ext)s', '')
+                for filename in os.listdir(downloads_dir):
+                    if os.path.basename(base_name) in filename:
+                        found_file = os.path.join(downloads_dir, filename)
+                        break
             
-            audio_clip = self.audio_manager.AudioClip(player, f"file://{temp_path}")
-            if not audio_clip:
-                self.logger.error(f"Failed to create audio clip for {temp_path}")
-                self.torchlight.SayPrivate(player, "Failed to create audio clip for playback.")
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
-                return 1
-            def cleanup_temp_file():
-                async def delayed_cleanup():
-                    await asyncio.sleep(2)
+            if found_file and os.path.exists(found_file):
+                file_size = os.path.getsize(found_file)
+                if file_size == 0:
+                    self.logger.error(f"File is empty: {found_file}")
+                    self.torchlight.SayPrivate(player, "Download failed: File is empty.")
                     try:
-                        if os.path.exists(temp_path):
-                            os.unlink(temp_path)
-                            self.logger.info(f"Cleaned up: {temp_path}")
+                        os.unlink(found_file)
+                    except:
+                        pass
+                    return 1
+                
+                if not found_file.endswith('.mp3'):
+                    mp3_path = found_file.rsplit('.', 1)[0] + '.mp3'
+                    success = await self._convert_to_mp3(found_file, mp3_path)
+                    if success:
+                        found_file = mp3_path
+                    else:
+                        return 1
+                
+                file_size = os.path.getsize(found_file)
+                file_size_mb = file_size / 1024 / 1024
+                self.logger.info(f"Downloaded {file_size_mb:.1f}MB to {found_file}")
+                
+                size_str = f"{file_size_mb:.1f}MB" if file_size_mb >= 1 else f"{file_size/1024:.0f}KB"
+                self.torchlight.SayChat(f"{{darkgreen}}[Torchlight]{{default}} Downloaded ({size_str})! Playing now...", player)
+                
+                audio_clip = self.audio_manager.AudioClip(player, f"file://{found_file}")
+                if not audio_clip:
+                    self.logger.error(f"Failed to create audio clip for {found_file}")
+                    self.torchlight.SayPrivate(player, "Failed to create audio clip for playback.")
+                    try:
+                        os.unlink(found_file)
+                    except:
+                        pass
+                    return 1
+                
+                def cleanup_temp_file():
+                    async def delayed_cleanup():
+                        await asyncio.sleep(5)
+                        try:
+                            if os.path.exists(found_file):
+                                os.unlink(found_file)
+                                self.logger.info(f"Cleaned up: {found_file}")
+                            base = found_file.rsplit('.', 1)[0]
+                            for ext in ['.webm', '.webp', '.jpg', '.png']:
+                                related = base + ext
+                                if os.path.exists(related):
+                                    os.unlink(related)
                             self._cleanup_old_files(downloads_dir, keep_last=10)
-                    except Exception as e:
-                        self.logger.error(f"Cleanup failed: {e}")
-                asyncio.ensure_future(delayed_cleanup())
+                        except Exception as e:
+                            self.logger.error(f"Cleanup failed: {e}")
+                    asyncio.ensure_future(delayed_cleanup())
+                
+                audio_clip.audio_player.AddCallback("Stop", cleanup_temp_file)
+                
+                self.torchlight.last_url = url
+                result = audio_clip.Play(real_time)
+                if result:
+                    return result
+                else:
+                    self.logger.error(f"Play failed for {found_file}")
+                    self.torchlight.SayPrivate(player, "Playback failed.")
+                    try:
+                        os.unlink(found_file)
+                    except:
+                        pass
+                    return 1
             
-            audio_clip.audio_player.AddCallback("Stop", cleanup_temp_file)
-            
-            self.torchlight.last_url = url
-            result = audio_clip.Play(real_time)
-            if result:
-                return result
             else:
-                self.logger.error(f"Play failed for {temp_path}")
-                self.torchlight.SayPrivate(player, "Playback failed.")
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
+                self.logger.error(f"No file created. Process output:")
+                for line in output_lines[-10:]:
+                    self.logger.error(f"  {line}")
+                self.torchlight.SayPrivate(player, "Download failed: No file created.")
                 return 1
             
         except Exception as e:
@@ -1067,12 +1110,49 @@ class YouTubeSearch(BaseCommand):
             self.torchlight.SayPrivate(player, f"Error: {str(e)[:100]}")
             
             try:
-                if 'temp_path' in locals() and os.path.exists(temp_path):
-                    os.unlink(temp_path)
+                if 'found_file' in locals() and os.path.exists(found_file):
+                    os.unlink(found_file)
             except:
                 pass
             
             return 1
+    
+    async def _convert_to_mp3(self, input_path: str, output_path: str) -> bool:
+        """Convert any audio file to mp3"""
+        try:
+            self.logger.info(f"Converting {input_path} to mp3...")
+            
+            cmd = [
+                'ffmpeg',
+                '-i', input_path,
+                '-vn',
+                '-ar', '48000',
+                '-ac', '2',
+                '-b:a', '192k',
+                '-f', 'mp3',
+                output_path,
+                '-y'
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            await process.communicate()
+            
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 100000:
+                try:
+                    os.unlink(input_path)
+                except:
+                    pass
+                return True
+            
+        except Exception as e:
+            self.logger.error(f"Conversion failed: {e}")
+        
+        return False
     
     def _cleanup_old_files(self, directory: str, keep_last: int = 10):
         """Clean up old files, keeping only the most recent ones"""
@@ -1080,7 +1160,7 @@ class YouTubeSearch(BaseCommand):
             files = []
             for filename in os.listdir(directory):
                 filepath = os.path.join(directory, filename)
-                if os.path.isfile(filepath) and filename.startswith('youtube_'):
+                if os.path.isfile(filepath):
                     files.append((filepath, os.path.getmtime(filepath)))
             files.sort(key=lambda x: x[1], reverse=True)
             for filepath, _ in files[keep_last:]:
