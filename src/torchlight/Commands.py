@@ -1099,8 +1099,8 @@ class YouTubeSearch(BaseCommand):
 
             else:
                 self.logger.error("No file created. Process output:")
-                for output_line in output_lines[-10:]:
-                    self.logger.error(f"  {output_line}")
+                for line in output_lines[-10:]:
+                    self.logger.error(f"  {line}")
                 self.torchlight.SayPrivate(player, "Download failed: No file created.")
                 return 1
 
@@ -1383,7 +1383,6 @@ class TranslateSay(BaseCommand):
         self.triggers = [f"!tsay{lang}" for lang in self.VALID_LANGUAGES]
 
     async def TranslateAndSay(self, player: Player, target_lang: str, tld: str, message: str) -> int:
-
         supported_langs = gtts.lang.tts_langs()
 
         if target_lang not in supported_langs:
