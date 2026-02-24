@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import os
 import socket
 import struct
 import time
@@ -61,8 +62,21 @@ class FFmpegAudioPlayer:
             "--output",
             "-",
             "-L",
-            uri,
         ]
+        if "youtube.com" in uri or "googlevideo.com" in uri:
+            try:
+                config = self.torchlight.config["Command"]["YouTubeSearch"]
+                if "parameters" in config and "cookies" in config["parameters"]:
+                    cookies_path = config["parameters"]["cookies"]
+                    if cookies_path and os.path.exists(cookies_path):
+                        curl_command.extend(["-b", cookies_path])
+                        self.logger.info("Adding cookies for YouTube URL")
+            except Exception as e:
+                self.logger.debug(f"Failed to add YouTube cookies: {e}")
+                pass
+
+        curl_command.append(uri)
+
         if self.proxy:
             curl_command.extend(
                 [
@@ -70,6 +84,7 @@ class FFmpegAudioPlayer:
                     self.proxy,
                 ]
             )
+
         ffmpeg_command = [
             "/usr/bin/ffmpeg",
             "-i",
@@ -112,6 +127,7 @@ class FFmpegAudioPlayer:
 
     # @profile
     def Stop(self, force: bool = True) -> bool:
+        self.logger.info(f"FFmpegAudioPlayer.Stop called for {self.uri}")
         if not self.playing:
             return False
 
@@ -230,7 +246,10 @@ class FFmpegAudioPlayer:
 
                 if writer is not None:
                     writer.write(data)
-                    await writer.drain()
+                    try:
+                        await writer.drain()
+                    except (ConnectionResetError, BrokenPipeError):
+                        return
 
                 bytes_len = len(data)
                 samples = bytes_len / SAMPLEBYTES
@@ -252,41 +271,72 @@ class FFmpegAudioPlayer:
             raise exc
 
     # @profile
-    async def _stream_subprocess(self, curl_command: list[str], ffmpeg_command: list[str]) -> None:
+    async def _stream_subprocess(
+        self, curl_command: list[str] | None, ffmpeg_command: list[str], is_hls: bool = False
+    ) -> None:
         if not self.playing:
             return
 
         try:
             _, self.writer = await asyncio.open_connection(self.host, self.port)
 
-            self.curl_process = await asyncio.create_subprocess_exec(
-                *curl_command,
-                stdout=asyncio.subprocess.PIPE,
-            )
+            if not is_hls and curl_command:
+                # For direct URLs: curl -> ffmpeg
+                self.curl_process = await asyncio.create_subprocess_exec(
+                    *curl_command,
+                    stdout=asyncio.subprocess.PIPE,
+                )
 
-            self.ffmpeg_process = await asyncio.create_subprocess_exec(
-                *ffmpeg_command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
+                self.ffmpeg_process = await asyncio.create_subprocess_exec(
+                    *ffmpeg_command,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
 
-            asyncio.create_task(self._wait_for_process_exit(self.curl_process))
+                asyncio.create_task(self._wait_for_process_exit(self.curl_process))
+                asyncio.create_task(self._write_stream(self.curl_process.stdout, self.ffmpeg_process.stdin))
+                asyncio.create_task(self._read_stream(self.ffmpeg_process.stdout, self.writer))
 
-            asyncio.create_task(self._write_stream(self.curl_process.stdout, self.ffmpeg_process.stdin))
+                asyncio.create_task(self._read_stderr(self.ffmpeg_process.stderr))
 
-            asyncio.create_task(self._read_stream(self.ffmpeg_process.stdout, self.writer))
+            else:
+                self.logger.info("Starting ffmpeg for HLS stream")
+                self.ffmpeg_process = await asyncio.create_subprocess_exec(
+                    *ffmpeg_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+
+                asyncio.create_task(self._read_stream(self.ffmpeg_process.stdout, self.writer))
+                asyncio.create_task(self._read_stderr(self.ffmpeg_process.stderr))
 
             if self.ffmpeg_process is not None:
                 await self.ffmpeg_process.wait()
+                self.logger.info(f"FFmpeg process exited with code: {self.ffmpeg_process.returncode}")
 
             if self.seconds == 0.0:
+                self.logger.warning("No audio data was streamed")
                 self.Stop()
 
         except Exception as exc:
+            self.logger.error(f"Error in _stream_subprocess: {exc}")
             self.Stop()
-            self.torchlight.SayChat(f"Error: {str(exc)}")
-            raise exc
+            self.torchlight.SayChat(f"Error playing audio: {str(exc)[:100]}")
+
+    async def _read_stderr(self, stream: StreamReader | None) -> None:
+        """Read and log ffmpeg stderr for debugging"""
+        try:
+            if stream:
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    line_str = line.decode("utf-8", errors="ignore").strip()
+                    if line_str and not line_str.startswith("frame=") and not line_str.startswith("size="):
+                        self.logger.debug(f"ffmpeg: {line_str}")
+        except Exception as e:
+            self.logger.debug(f"Error reading stderr: {e}")
 
     async def _write_stream(self, stream: StreamReader | None, writer: StreamWriter | None) -> None:
         try:
@@ -299,7 +349,10 @@ class FFmpegAudioPlayer:
 
                 if writer:
                     writer.write(chunk)
-                    await writer.drain()
+                    try:
+                        await writer.drain()
+                    except (ConnectionResetError, BrokenPipeError):
+                        return
             if writer:
                 writer.close()
         except Exception as exc:
@@ -311,7 +364,7 @@ class FFmpegAudioPlayer:
         try:
             await curl_process.wait()
             if curl_process.returncode != 0 and curl_process.returncode != -15:
-                raise Exception(f"Curl process exited with error code {curl_process.returncode}")
+                self.logger.error(f"Curl process exited with error code {curl_process.returncode}")
         except Exception as exc:
             self.Stop()
             self.torchlight.SayChat(f"Error: {str(exc)}")

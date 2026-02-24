@@ -102,7 +102,7 @@ def get_url_real_time(url: str) -> int:
 
 
 # @profile
-def get_url_youtube_info(url: str, proxy: str = "") -> dict:
+def get_url_youtube_info(url: str, proxy: str = "", cookies: str | None = None) -> dict:
     # https://github.com/ytdl-org/youtube-dl/blob/3e4cedf9e8cd3157df2457df7274d0c842421945/youtube_dl/YoutubeDL.py#L137-L312
     # https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/YoutubeDL.py#L192
     ydl_opts = {
@@ -117,17 +117,19 @@ def get_url_youtube_info(url: str, proxy: str = "") -> dict:
     }
     if proxy:
         ydl_opts["proxy"] = proxy
+    if cookies:
+        ydl_opts["cookiefile"] = cookies
     ydl = yt_dlp.YoutubeDL(ydl_opts)
     ydl.add_default_info_extractors()
     return ydl.extract_info(url, download=False)
 
 
 # @profile
-def get_first_valid_entry(entries: list[Any], proxy: str = "") -> dict[str, Any]:
+def get_first_valid_entry(entries: list[Any], proxy: str = "", cookies: str | None = None) -> dict[str, Any]:
     for entry in entries:
         input_url = f"https://youtube.com/watch?v={entry['id']}"
         try:
-            info = get_url_youtube_info(url=input_url, proxy=proxy)
+            info = get_url_youtube_info(url=input_url, proxy=proxy, cookies=cookies)
             return info
         except yt_dlp.utils.DownloadError:
             logger.warning(f"Error trying to download <{input_url}>")
@@ -139,5 +141,9 @@ def get_audio_format(info: dict[str, Any]) -> str:
     for format in info["formats"]:
         if "audio_channels" in format:
             logger.debug(json.dumps(format, indent=2))
+            return format["url"]
+    for format in info["formats"]:
+        if format.get("acodec") != "none":
+            logger.debug(f"Found audio format: {format.get('format_note', 'unknown')}")
             return format["url"]
     raise Exception("No compatible audio format found, try something else")

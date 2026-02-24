@@ -188,6 +188,18 @@
 				}
 			]
 		},
+		"StopAll": {
+			"level": 10,
+			"triggers": [
+				{
+					"command": "!stopall",
+					"starts_with": false
+				},
+				{
+					"command": "!forcestopall"
+				}
+			]
+		},
 		"Say":
 		{
 			"level": 2,
@@ -195,6 +207,21 @@
 				{
 					"command": "!say",
 					"starts_with": true
+				}
+			],
+			"parameters": {
+				"default": {
+					"language": "en",
+					"tld": "com"
+				}
+			}
+		},
+		"TranslateSay": {
+			"level": 2,
+			"triggers": [
+				{ 
+					"command": "!tsay", 
+					"starts_with": true 
 				}
 			],
 			"parameters": {
@@ -224,6 +251,7 @@
 			],
 			"parameters": {
 				"proxy": "",
+				"cookies": "",
 				"keywords_banned": [
 					"earrape",
 					"rape",
