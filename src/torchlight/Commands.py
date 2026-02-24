@@ -980,10 +980,10 @@ class YouTubeSearch(BaseCommand):
             if process.stdout is None:
                 raise RuntimeError("process.stdout is None")
             while True:
-                line = await process.stdout.readline()
-                if not line:
+                raw_line: bytes = await process.stdout.readline()
+                if not raw_line:
                     break
-                line_str = line.decode("utf-8", errors="ignore").strip()
+                line_str = raw_line.decode("utf-8", errors="ignore").strip()
                 if line_str:
                     output_lines.append(line_str)
                     print(f"  {line_str}")
@@ -1099,27 +1099,25 @@ class YouTubeSearch(BaseCommand):
 
             else:
                 self.logger.error("No file created. Process output:")
-                for line in output_lines[-10:]:
-                    self.logger.error(f"  {line}")
+                for log_line in output_lines[-10:]:
+                    self.logger.error(f"  {log_line}")
                 self.torchlight.SayPrivate(player, "Download failed: No file created.")
                 return 1
 
         except Exception as e:
-            self.logger.error(f"Error downloading/playing YouTube audio: {type(e).__name__}: {e}")
-            import traceback
+                self.logger.error(f"Error downloading/playing YouTube audio: {type(e).__name__}: {e}")
+                import traceback
+                traceback.print_exc()
+                self.torchlight.SayPrivate(player, f"Error: {str(e)[:100]}")
 
-            traceback.print_exc()
-            self.torchlight.SayPrivate(player, f"Error: {str(e)[:100]}")
+                try:
+                    found_file_maybe: str | None = locals().get("found_file")
+                    if found_file_maybe is not None and os.path.exists(found_file_maybe):
+                        os.unlink(found_file_maybe)
+                except Exception as e2:
+                    self.logger.debug(f"Failed to delete file in exception handler: {e2}")
 
-            try:
-                found_file_maybe: str | None = locals().get("found_file")
-                if found_file_maybe is not None and os.path.exists(found_file_maybe):
-                    os.unlink(found_file_maybe)
-            except Exception as e:
-                self.logger.debug(f"Failed to delete file in exception handler {found_file}: {e}")
-                pass
-
-            return 1
+                return 1
 
     async def _convert_to_mp3(self, input_path: str, output_path: str) -> bool:
         """Convert any audio file to mp3"""
