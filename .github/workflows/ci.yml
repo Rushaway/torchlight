@@ -16,10 +16,12 @@ on:
     branches:
       - 'main'
       - 'master'
+      - 'dev'
   pull_request:
     branches:
       - master
       - main
+      - dev
 
 env:
   REGISTRY: ghcr.io
@@ -65,3 +67,4 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
