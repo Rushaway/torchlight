@@ -63,20 +63,16 @@ class AudioManager:
         stop_level = self.anti_spam.config.get("StopLevel", 3)
         self.logger.info(f"Stop called by {player.name} (level {level}), extra='{extra}'")
         self.logger.info(f"Currently playing {len(self.audio_clips)} audio clip(s)")
-        
         if not self.audio_clips:
             self.torchlight.SayPrivate(player, "No audio is currently playing.")
             return
-        
         stopped_count = 0
         for audio_clip in self.audio_clips[:]:
             clip_player = audio_clip.player
             clip_level = audio_clip.level
             self.logger.info(f"Checking clip: {clip_player.name} (level {clip_level}) playing {audio_clip.uri}")
-            
             if extra and extra.lower() not in clip_player.name.lower():
                 continue
-            
             can_stop = False
             reason = ""
             if player.user_id == clip_player.user_id:
@@ -91,7 +87,6 @@ class AudioManager:
             else:
                 audio_clip.stops.add(player.user_id)
                 votes_needed = 3 - len(audio_clip.stops)
-                
                 if votes_needed <= 0:
                     can_stop = True
                     reason = "vote passed"

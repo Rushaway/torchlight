@@ -146,5 +146,4 @@ def get_audio_format(info: dict[str, Any]) -> str:
         if format.get("acodec") != "none":
             logger.debug(f"Found audio format: {format.get('format_note', 'unknown')}")
             return format["url"]
-    
     raise Exception("No compatible audio format found, try something else")

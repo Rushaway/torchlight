@@ -3,12 +3,14 @@ name: Python Linting
 on:
   push:
     branches:
-      - dev
+      - master
+      - main
     paths:
       - "**/*.py"
   pull_request:
     branches:
-      - dev
+      - master
+      - main
     paths:
       - "**/*.py"
 

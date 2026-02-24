@@ -1,12 +1,11 @@
 import asyncio
-import os
 import datetime
 import logging
+import os
 import socket
 import struct
 import time
 import traceback
-import urllib.parse
 from asyncio import StreamReader, StreamWriter
 from asyncio.subprocess import Process
 from collections.abc import Callable
@@ -64,19 +63,20 @@ class FFmpegAudioPlayer:
             "-",
             "-L",
         ]
-        if 'youtube.com' in uri or 'googlevideo.com' in uri:
+        if "youtube.com" in uri or "googlevideo.com" in uri:
             try:
                 config = self.torchlight.config["Command"]["YouTubeSearch"]
                 if "parameters" in config and "cookies" in config["parameters"]:
                     cookies_path = config["parameters"]["cookies"]
                     if cookies_path and os.path.exists(cookies_path):
                         curl_command.extend(["-b", cookies_path])
-                        self.logger.info(f"Adding cookies for YouTube URL")
-            except:
+                        self.logger.info("Adding cookies for YouTube URL")
+            except Exception as e:
+                self.logger.debug(f"Failed to add YouTube cookies: {e}")
                 pass
-        
+
         curl_command.append(uri)
-        
+
         if self.proxy:
             curl_command.extend(
                 [
@@ -84,7 +84,7 @@ class FFmpegAudioPlayer:
                     self.proxy,
                 ]
             )
-        
+
         ffmpeg_command = [
             "/usr/bin/ffmpeg",
             "-i",
@@ -271,7 +271,9 @@ class FFmpegAudioPlayer:
             raise exc
 
     # @profile
-    async def _stream_subprocess(self, curl_command: list[str] | None, ffmpeg_command: list[str], is_hls: bool = False) -> None:
+    async def _stream_subprocess(
+        self, curl_command: list[str] | None, ffmpeg_command: list[str], is_hls: bool = False
+    ) -> None:
         if not self.playing:
             return
 
@@ -295,9 +297,9 @@ class FFmpegAudioPlayer:
                 asyncio.create_task(self._wait_for_process_exit(self.curl_process))
                 asyncio.create_task(self._write_stream(self.curl_process.stdout, self.ffmpeg_process.stdin))
                 asyncio.create_task(self._read_stream(self.ffmpeg_process.stdout, self.writer))
-                
+
                 asyncio.create_task(self._read_stderr(self.ffmpeg_process.stderr))
-                
+
             else:
                 self.logger.info("Starting ffmpeg for HLS stream")
                 self.ffmpeg_process = await asyncio.create_subprocess_exec(
@@ -330,8 +332,8 @@ class FFmpegAudioPlayer:
                     line = await stream.readline()
                     if not line:
                         break
-                    line_str = line.decode('utf-8', errors='ignore').strip()
-                    if line_str and not line_str.startswith('frame=') and not line_str.startswith('size='):
+                    line_str = line.decode("utf-8", errors="ignore").strip()
+                    if line_str and not line_str.startswith("frame=") and not line_str.startswith("size="):
                         self.logger.debug(f"ffmpeg: {line_str}")
         except Exception as e:
             self.logger.debug(f"Error reading stderr: {e}")
