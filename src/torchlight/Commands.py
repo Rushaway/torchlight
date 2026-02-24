@@ -974,9 +974,11 @@ class YouTubeSearch(BaseCommand):
 
             process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
-            output_lines = []
+            output_lines: list[str] = []
             converting_to_mp3 = False
 
+            if process.stdout is None:
+                raise RuntimeError("process.stdout is None")
             while True:
                 line = await process.stdout.readline()
                 if not line:
@@ -1061,8 +1063,8 @@ class YouTubeSearch(BaseCommand):
                         pass
                     return 1
 
-                def cleanup_temp_file():
-                    async def delayed_cleanup():
+                def cleanup_temp_file() -> None:
+                    async def delayed_cleanup() -> None:
                         await asyncio.sleep(5)
                         try:
                             if os.path.exists(found_file):
@@ -1097,8 +1099,8 @@ class YouTubeSearch(BaseCommand):
 
             else:
                 self.logger.error("No file created. Process output:")
-                for line in output_lines[-10:]:
-                    self.logger.error(f"  {line}")
+                for output_line in output_lines[-10:]:
+                    self.logger.error(f"  {output_line}")
                 self.torchlight.SayPrivate(player, "Download failed: No file created.")
                 return 1
 
@@ -1110,8 +1112,9 @@ class YouTubeSearch(BaseCommand):
             self.torchlight.SayPrivate(player, f"Error: {str(e)[:100]}")
 
             try:
-                if "found_file" in locals() and os.path.exists(found_file):
-                    os.unlink(found_file)
+                found_file_maybe: str | None = locals().get("found_file")
+                if found_file_maybe is not None and os.path.exists(found_file_maybe):
+                    os.unlink(found_file_maybe)
             except Exception as e:
                 self.logger.debug(f"Failed to delete file in exception handler {found_file}: {e}")
                 pass
@@ -1157,7 +1160,7 @@ class YouTubeSearch(BaseCommand):
 
         return False
 
-    def _cleanup_old_files(self, directory: str, keep_last: int = 10):
+    def _cleanup_old_files(self, directory: str, keep_last: int = 10) -> None:
         """Clean up old files, keeping only the most recent ones"""
         try:
             files = []
@@ -1366,13 +1369,20 @@ class TranslateSay(BaseCommand):
             "zh",
         ]
 
-    def __init__(self, torchlight, access_manager, player_manager, audio_manager, trigger_manager):
+    def __init__(
+        self,
+        torchlight: Torchlight,
+        access_manager: AccessManager,
+        player_manager: PlayerManager,
+        audio_manager: AudioManager,
+        trigger_manager: TriggerManager,
+    ) -> None:
         super().__init__(torchlight, access_manager, player_manager, audio_manager, trigger_manager)
 
         self.translator = Translator()
         self.triggers = [f"!tsay{lang}" for lang in self.VALID_LANGUAGES]
 
-    async def TranslateAndSay(self, player, target_lang: str, tld: str, message: str) -> int:
+    async def TranslateAndSay(self, player: Player, target_lang: str, tld: str, message: str) -> int:
 
         supported_langs = gtts.lang.tts_langs()
 
@@ -1420,7 +1430,7 @@ class TranslateSay(BaseCommand):
         os.unlink(temp_file.name)
         return 1
 
-    async def _func(self, message: list[str], player):
+    async def _func(self, message: list[str], player: Player) -> int:
         self.logger.debug("_func " + str(message))
 
         if self.check_disabled(player):

@@ -102,7 +102,7 @@ def get_url_real_time(url: str) -> int:
 
 
 # @profile
-def get_url_youtube_info(url: str, proxy: str = "", cookies: str = None) -> dict:
+def get_url_youtube_info(url: str, proxy: str = "", cookies: str | None = None) -> dict:
     # https://github.com/ytdl-org/youtube-dl/blob/3e4cedf9e8cd3157df2457df7274d0c842421945/youtube_dl/YoutubeDL.py#L137-L312
     # https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/YoutubeDL.py#L192
     ydl_opts = {
@@ -125,7 +125,7 @@ def get_url_youtube_info(url: str, proxy: str = "", cookies: str = None) -> dict
 
 
 # @profile
-def get_first_valid_entry(entries: list[Any], proxy: str = "", cookies: str = None) -> dict[str, Any]:
+def get_first_valid_entry(entries: list[Any], proxy: str = "", cookies: str | None = None) -> dict[str, Any]:
     for entry in entries:
         input_url = f"https://youtube.com/watch?v={entry['id']}"
         try:
