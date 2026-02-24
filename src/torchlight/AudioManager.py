@@ -115,6 +115,7 @@ class AudioManager:
                 player,
                 "No audio clips matched your request. Use '!stop playername' to target specific player.",
             )
+
     def StopAll(self) -> None:
         self.logger.info("Force stopping all audio clips from all users.")
         # Copy the list to avoid modification during iteration

@@ -84,8 +84,8 @@ class CommandHandler:
 
         level = player.admin.level
 
-        #allowed_prefixes = ["!", "_", "#", "*", "$", "*", "&", "^", "~", "+"]
-        #if not any(message[0].startswith(prefix) for prefix in allowed_prefixes):
+        # allowed_prefixes = ["!", "_", "#", "*", "$", "*", "&", "^", "~", "+"]
+        # if not any(message[0].startswith(prefix) for prefix in allowed_prefixes):
         #    return None
 
         self.logger.info(f"{player.name}: {message}")

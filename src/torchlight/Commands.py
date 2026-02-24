@@ -659,7 +659,7 @@ class VoiceTrigger(BaseCommand):
                 self.torchlight.SayPrivate(
                     player,
                     f"Trigger '{voice_trigger}' requires level {reserved_level} or higher. "
-                    f"Your current level is {player_level}."
+                    f"Your current level is {player_level}.",
                 )
                 return None
 
@@ -667,8 +667,7 @@ class VoiceTrigger(BaseCommand):
         if player_level < voice_trigger_level:
             self.torchlight.SayPrivate(
                 player,
-                f"Voice triggers require level {voice_trigger_level} or higher. "
-                f"Your current level is {player_level}."
+                f"Voice triggers require level {voice_trigger_level} or higher. Your current level is {player_level}.",
             )
             return None
 
@@ -684,8 +683,9 @@ class VoiceTrigger(BaseCommand):
         else:
             return sounds
 
-    def _handle_sound_list(self, player: Player, voice_trigger: str, sounds: list[str],
-                           trigger_input: str, num: int | None) -> str | None:
+    def _handle_sound_list(
+        self, player: Player, voice_trigger: str, sounds: list[str], trigger_input: str, num: int | None
+    ) -> str | None:
         """
         Handle selection from a list of sounds.
 
@@ -704,8 +704,7 @@ class VoiceTrigger(BaseCommand):
                 return sounds[num - 1]
             else:
                 self.torchlight.SayPrivate(
-                    player,
-                    f"Number {num} is out of range. Choose 1-{len(sounds)} for '{voice_trigger}'."
+                    player, f"Number {num} is out of range. Choose 1-{len(sounds)} for '{voice_trigger}'."
                 )
                 return None
 
@@ -714,8 +713,7 @@ class VoiceTrigger(BaseCommand):
 
         return secrets.choice(sounds)
 
-    def _search_sound_list(self, player: Player, voice_trigger: str, sounds: list[str],
-                           search_term: str) -> str | None:
+    def _search_sound_list(self, player: Player, voice_trigger: str, sounds: list[str], search_term: str) -> str | None:
         """
         Search through sound list by filename.
 
@@ -748,7 +746,7 @@ class VoiceTrigger(BaseCommand):
                 self.torchlight.SayPrivate(
                     player,
                     f"Found {len(matches)} matches for '{actual_search}' in '{voice_trigger}': "
-                    f"{', '.join(match_names[:10])}"
+                    f"{', '.join(match_names[:10])}",
                 )
                 return None
 
@@ -757,21 +755,18 @@ class VoiceTrigger(BaseCommand):
                 self.torchlight.SayPrivate(
                     player,
                     f"Multiple matches found for '{actual_search}': {', '.join(match_names[:5])}. "
-                    f"Using '{match_names[0]}'."
+                    f"Using '{match_names[0]}'.",
                 )
 
             return best_match
 
         if not is_search_only:
-            self.torchlight.SayPrivate(
-                player,
-                f"No matches found for '{actual_search}' in '{voice_trigger}'."
-            )
+            self.torchlight.SayPrivate(player, f"No matches found for '{actual_search}' in '{voice_trigger}'.")
 
         self.torchlight.SayPrivate(
             player,
             f"Available sounds for '{voice_trigger}': {', '.join(sound_names[:15])}"
-            + ("..." if len(sound_names) > 15 else "")
+            + ("..." if len(sound_names) > 15 else ""),
         )
 
         return None
@@ -834,10 +829,7 @@ class PlayMusic(BaseCommand):
                 ydl = yt_dlp.YoutubeDL(ydl_opts)
 
                 loop = asyncio.get_event_loop()
-                info = await loop.run_in_executor(
-                    None,
-                    lambda: ydl.extract_info(url, download=False)
-                )
+                info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
 
                 if info and "url" in info:
                     audio_url = info["url"]
@@ -942,18 +934,24 @@ class YouTubeSearch(BaseCommand):
         try:
             cmd = [
                 "yt-dlp",
-                "--js-runtime", "node",
-                "--remote-components", "ejs:github",
-                "-f", "bestaudio",
+                "--js-runtime",
+                "node",
+                "--remote-components",
+                "ejs:github",
+                "-f",
+                "bestaudio",
                 "-x",
-                "--audio-format", "mp3",
-                "--audio-quality", "192",
+                "--audio-format",
+                "mp3",
+                "--audio-quality",
+                "192",
                 "--embed-metadata",
                 "--embed-thumbnail",
                 "--no-playlist",
                 "--no-warnings",
-                "-o", output_template,
-                url
+                "-o",
+                output_template,
+                url,
             ]
 
             if cookies_path:
@@ -974,11 +972,7 @@ class YouTubeSearch(BaseCommand):
 
             self.logger.info(f"Running command: {' '.join(cmd[:12])}...")
 
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT
-            )
+            process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
             output_lines = []
             converting_to_mp3 = False
@@ -1008,7 +1002,7 @@ class YouTubeSearch(BaseCommand):
                         await asyncio.sleep(1)
                         file_size = os.path.getsize(temp_path)
                         if file_size > 100000:
-                            self.logger.info(f"✅ MP3 ready after {i+1} seconds")
+                            self.logger.info(f"✅ MP3 ready after {i + 1} seconds")
                             break
                     await asyncio.sleep(1)
 
@@ -1051,10 +1045,9 @@ class YouTubeSearch(BaseCommand):
                 file_size_mb = file_size / 1024 / 1024
                 self.logger.info(f"Downloaded {file_size_mb:.1f}MB to {found_file}")
 
-                size_str = f"{file_size_mb:.1f}MB" if file_size_mb >= 1 else f"{file_size/1024:.0f}KB"
+                size_str = f"{file_size_mb:.1f}MB" if file_size_mb >= 1 else f"{file_size / 1024:.0f}KB"
                 self.torchlight.SayChat(
-                    f"{{darkgreen}}[Torchlight]{{default}} Downloaded ({size_str})! Playing now...",
-                    player
+                    f"{{darkgreen}}[Torchlight]{{default}} Downloaded ({size_str})! Playing now...", player
                 )
 
                 audio_clip = self.audio_manager.AudioClip(player, f"file://{found_file}")
@@ -1083,6 +1076,7 @@ class YouTubeSearch(BaseCommand):
                             self._cleanup_old_files(downloads_dir, keep_last=10)
                         except Exception as e:
                             self.logger.error(f"Cleanup failed: {e}")
+
                     asyncio.ensure_future(delayed_cleanup())
 
                 audio_clip.audio_player.AddCallback("Stop", cleanup_temp_file)
@@ -1111,6 +1105,7 @@ class YouTubeSearch(BaseCommand):
         except Exception as e:
             self.logger.error(f"Error downloading/playing YouTube audio: {type(e).__name__}: {e}")
             import traceback
+
             traceback.print_exc()
             self.torchlight.SayPrivate(player, f"Error: {str(e)[:100]}")
 
@@ -1130,21 +1125,22 @@ class YouTubeSearch(BaseCommand):
 
             cmd = [
                 "ffmpeg",
-                "-i", input_path,
+                "-i",
+                input_path,
                 "-vn",
-                "-ar", "48000",
-                "-ac", "2",
-                "-b:a", "192k",
-                "-f", "mp3",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                "-b:a",
+                "192k",
+                "-f",
+                "mp3",
                 output_path,
-                "-y"
+                "-y",
             ]
 
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+            process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
             await process.communicate()
 
@@ -1304,15 +1300,70 @@ class Say(BaseCommand):
 
 
 class TranslateSay(BaseCommand):
-
     try:
         VALID_LANGUAGES = list(gtts.lang.tts_langs().keys())
     except Exception:
         VALID_LANGUAGES = [
-            "af", "ar", "bn", "bs", "ca", "cs", "cy", "da", "de", "el", "en", "eo", "es", "et", "fi", "fr", "gu",
-            "hi", "hr", "hu", "hy", "id", "is", "it", "ja", "jw", "km", "kn", "ko", "la", "lv", "mk", "ml", "mr",
-            "my", "ne", "nl", "no", "pl", "pt", "ro", "ru", "si", "sk", "sq", "sr", "su", "sv", "sw", "ta", "te",
-            "th", "tl", "tr", "uk", "ur", "vi", "zh-CN", "zh-TW", "zh"
+            "af",
+            "ar",
+            "bn",
+            "bs",
+            "ca",
+            "cs",
+            "cy",
+            "da",
+            "de",
+            "el",
+            "en",
+            "eo",
+            "es",
+            "et",
+            "fi",
+            "fr",
+            "gu",
+            "hi",
+            "hr",
+            "hu",
+            "hy",
+            "id",
+            "is",
+            "it",
+            "ja",
+            "jw",
+            "km",
+            "kn",
+            "ko",
+            "la",
+            "lv",
+            "mk",
+            "ml",
+            "mr",
+            "my",
+            "ne",
+            "nl",
+            "no",
+            "pl",
+            "pt",
+            "ro",
+            "ru",
+            "si",
+            "sk",
+            "sq",
+            "sr",
+            "su",
+            "sv",
+            "sw",
+            "ta",
+            "te",
+            "th",
+            "tl",
+            "tr",
+            "uk",
+            "ur",
+            "vi",
+            "zh-CN",
+            "zh-TW",
+            "zh",
         ]
 
     def __init__(self, torchlight, access_manager, player_manager, audio_manager, trigger_manager):
@@ -1388,13 +1439,13 @@ class TranslateSay(BaseCommand):
 
         if target_lang not in self.VALID_LANGUAGES:
             self.torchlight.SayPrivate(
-                player,
-                f"{{darkred}}[TranslateSay]{{default}} Language '{target_lang}' not supported."
+                player, f"{{darkred}}[TranslateSay]{{default}} Language '{target_lang}' not supported."
             )
             return 1
 
         asyncio.ensure_future(self.TranslateAndSay(player, target_lang, tld, message[1]))
         return 0
+
 
 class DECTalk(BaseCommand):
     async def Say(self, player: Player, message: str) -> int:
@@ -1454,6 +1505,7 @@ class Stop(BaseCommand):
         self.audio_manager.Stop(player, extra)
         return 0
 
+
 class StopAll(BaseCommand):
     async def _func(self, message: list[str], player: Player) -> int:
         self.logger.debug(sys._getframe().f_code.co_name + " " + str(message))
@@ -1463,7 +1515,7 @@ class StopAll(BaseCommand):
             self.torchlight.SayPrivate(
                 player,
                 f"{{darkred}}[Torchlight]{{default}} This command requires level "
-                f"{required_level} or higher. Your level is {player_level}."
+                f"{required_level} or higher. Your level is {player_level}.",
             )
             return 1
         count = len(self.audio_manager.audio_clips)
@@ -1651,16 +1703,14 @@ class Reload(BaseCommand):
         player_level = player.admin.level
         if player_level < required_level:
             self.torchlight.SayPrivate(
-                player,
-                f"This command requires level {required_level} or higher. Your level is {player_level}."
+                player, f"This command requires level {required_level} or higher. Your level is {player_level}."
             )
             return 1
 
         self.logger.info(f"Reloading configuration by {player.name}")
         self.torchlight.Reload()
         self.torchlight.SayPrivate(
-            player,
-            "Torchlight configuration has been reloaded (config, triggers, access list)."
+            player, "Torchlight configuration has been reloaded (config, triggers, access list)."
         )
         return 0
 
